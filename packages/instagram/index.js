@@ -50,17 +50,26 @@ async function login(authFilepath = defaultAuthFilepath) {
   return ig;
 }
 
-function keepUser(username) {
-  return true;
-  const whitelist = ['annasioi'];
-  return whitelist.indexOf(username) > 0;
+function parseWhitelist() {
+  let list = null;
+  if (_.isString(process.env.IG_WHITELIST) && !_.isEmpty(process.env.IG_WHITELIST)) {
+    list = process.env.IG_WHITELIST.split(',').replace(/ /g, '');
+  }
+  debug(`whitelist ${list}`);
+  return list;
+}
+
+function keepUser(username, whiteList = []) {
+  return _.includes(whiteList, username);
 }
 
 async function getStories(ig) {
   const wholeReelsTray = await ig.feed.reelsTray().request();
+  const whiteList = parseWhitelist();
+
   return Promise.all(
     wholeReelsTray.tray
-      .filter((tray) => keepUser(tray.user.username))
+      .filter((tray) => keepUser(tray.user.username, whiteList))
       .map(async (tray) => {
         const userStory = await ig.feed.userStory(tray.user.pk).request();
         return {
