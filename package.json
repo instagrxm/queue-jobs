@@ -16,6 +16,7 @@
     "bull": "^3.13.0",
     "date-fns": "^2.12.0",
     "debug": "^4.1.1",
+    "dotenv": "^8.2.0",
     "instagram-private-api": "^1.39.2",
     "mkdirp": "^1.0.4",
     "uuid": "^7.0.3"

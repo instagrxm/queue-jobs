@@ -1,8 +1,8 @@
+require('dotenv').config();
 const _ = require('lodash');
 const Queue = require('bull');
 const path = require('path');
 const q = new Queue('instagram-stories');
-
 const { login, getStories, downloadStories } = require('../packages/instagram');
 const { uploadFiles } = require('../packages/storage/azure');
 const { notify } = require('../packages/telegram');
