@@ -1,57 +1,121 @@
+const _ = require('lodash');
 const Queue = require('bull');
 const path = require('path');
 const q = new Queue('instagram-stories');
-const { login, getStories, download } = require('../packages/instagram');
 
-if (!process.env.IG_USERNAME || !process.env.IG_PASSWORD) {
-  console.log('IG_USERNAME & IG_PASSWORD env variables must be set.');
-  process.exit(1);
-}
+const { login, getStories, downloadStories } = require('../packages/instagram');
+const { uploadFiles } = require('../packages/storage/azure');
+const { notify } = require('../packages/telegram');
 
-q.process('instagram-stories-cron', async (job) => {
-  console.log(`Processing job ${job.name} from queue ${job.queue.name}.`);
+/*
+|--------------------------------------------------------------------------
+| Job Constants
+|--------------------------------------------------------------------------
+*/
+const JOB_NAME = 'download-instagram-stories';
+const INSTAGRAM_DOWNLOAD_PATH = path.join(__dirname, '..', 'data', 'instagram');
+const debug = require('debug')(JOB_NAME);
 
+/*
+|--------------------------------------------------------------------------
+| Catch queue errors and failed jobs
+|--------------------------------------------------------------------------
+*/
+q.on('error', (error) => debug('error', error));
+q.on('failed', async (job, error) => {
+  console.error(`failed`, job.name, error);
+  await notify({ message: `🚨 Job "${JOB_NAME}" failed: \`${error.message}\`` });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Job handlers
+|--------------------------------------------------------------------------
+*/
+async function handleFetchStories(job) {
+  debug(`Processing job ${job.name} from queue ${job.queue.name}.`);
   const ig = await login();
   const stories = await getStories(ig);
-  const downloadJob = await q.add(
-    'instagram-stories-downloader',
-    { stories },
-    {
-      attempts: 3,
-      removeOnComplete: false,
-      removeOnFail: false,
-      timeout: 5 * 60 * 1000
-    }
+  const downloadJob = await createDownloadStoriesJob({ stories });
+  debug(
+    `Created job ${downloadJob.name} from queue ${downloadJob.queue.name} %O`,
+    downloadJob.toJSON()
   );
-  console.log(`Created job ${downloadJob.name} from queue ${downloadJob.queue.name}`);
-
-  console.log(`Done processing job ${job.name}.`);
+  debug(`Done processing job ${job.name}.`);
   return stories;
-});
+}
 
-q.process('instagram-stories-downloader', async (job) => {
-  console.log(`Processing job ${job.name} from queue ${job.queue.name}.`);
-
+async function handleDownloadStories(job) {
+  debug(`Processing job ${job.name} from queue ${job.queue.name}.`);
   const stories = job.data.stories;
-  await download(stories, path.join(__dirname, '..', 'data', 'instagram'));
-  console.log(`Done processing job ${job.name}.`);
-});
+  const downloads = await downloadStories(stories, INSTAGRAM_DOWNLOAD_PATH);
+  const uploadJob = await createUploadStoriesJob({ downloads: _.flatten(downloads) });
+  debug(`Created job ${uploadJob.name} from queue ${uploadJob.queue.name} %O`, uploadJob.toJSON());
+  debug(`Done processing job ${job.name}.`);
+  return downloads;
+}
 
-const addCronJob = async () =>
-  q.add(
+async function handleUploadStories(job) {
+  const makeUploadPath = (filepath) => filepath.split('/').slice(-2).join('/');
+
+  debug(`Processing job ${job.name} from queue ${job.queue.name}.`);
+  const downloadPaths = job.data.downloads;
+  await uploadFiles(downloadPaths, 'instagram', 5, makeUploadPath);
+  debug(`Done processing job ${job.name}.`);
+}
+
+/*
+|--------------------------------------------------------------------------
+| Job creators
+|--------------------------------------------------------------------------
+*/
+async function createFetchStoriesCronJob() {
+  return q.add(
     'instagram-stories-cron',
     {},
     {
-      attempts: 5,
       removeOnComplete: false,
       removeOnFail: false,
+      attempts: 0,
       timeout: 30 * 1000, // 30sec
       repeat: {
-        cron: '15 10 * *'
+        cron: '15 10 * * *', // every day at 10:15am
+        tz: 'America/Los_Angeles'
       }
     }
   );
+}
 
-addCronJob()
-  .then((job) => console.log(`Created job ${job.name} from queue ${job.queue.name}.`))
-  .catch(console.error);
+async function createDownloadStoriesJob(data) {
+  return q.add('instagram-stories-downloader', data, {
+    removeOnComplete: false,
+    removeOnFail: false,
+    timeout: 30 * 60 * 1000 // 30min
+  });
+}
+
+async function createUploadStoriesJob(data) {
+  return q.add('instagram-stories-uploader', data, {
+    removeOnComplete: false,
+    removeOnFail: false,
+    timeout: 30 * 60 * 1000 // 30min
+  });
+}
+
+/*
+|--------------------------------------------------------------------------
+| Main
+|--------------------------------------------------------------------------
+*/
+async function main() {
+  q.process('instagram-stories-cron', handleFetchStories);
+  q.process('instagram-stories-downloader', handleDownloadStories);
+  q.process('instagram-stories-uploader', handleUploadStories);
+
+  const job = await createFetchStoriesCronJob();
+  debug(`Created job ${job.name} from queue ${job.queue.name}. %O`, job.toJSON());
+}
+
+main()
+  .then(() => debug('Done'))
+  .catch((e) => debug('Error: ', e));
