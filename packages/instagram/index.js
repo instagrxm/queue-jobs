@@ -3,10 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const _ = require('lodash');
-const eachLimit = require('async/eachLimit');
+const mapLimit = require('async/mapLimit');
 const format = require('date-fns/format');
 const fromUnixTime = require('date-fns/fromUnixTime');
 const mkdirp = require('mkdirp');
+const debug = require('debug')('instagram');
 
 const defaultAuthFilepath = path.join(__dirname, 'auth.json');
 const defaultDownloadPath = path.join(__dirname, 'downloads');
@@ -27,6 +28,10 @@ async function saveFile(data, path) {
 // The reccomended way to use login.
 // See https://github.com/dilame/instagram-private-api/blob/master/examples/session.example.ts
 async function login(authFilepath = defaultAuthFilepath) {
+  if (!process.env.IG_USERNAME || !process.env.IG_PASSWORD) {
+    throw new Error('Missing env variables IG_USERNAME and IG_PASSWORD.');
+  }
+
   const ig = new IgApiClient();
   ig.state.generateDevice(process.env.IG_USERNAME);
   ig.state.proxyUrl = process.env.IG_PROXY;
@@ -82,7 +87,7 @@ async function downloadFile(downloadPath, url, folder, filename) {
 
   await ensureDirs(p);
   const writer = fs.createWriteStream(p, { flags: 'w' });
-  console.log(`downloading ${url} to ${p}`);
+  debug(`downloading ${url} to ${p}`);
 
   const response = await axios({
     url,
@@ -92,7 +97,7 @@ async function downloadFile(downloadPath, url, folder, filename) {
 
   response.data.pipe(writer);
   return new Promise((resolve, reject) => {
-    writer.on('finish', resolve);
+    writer.on('finish', () => resolve(p));
     writer.on('error', reject);
   });
 }
@@ -108,31 +113,21 @@ function assetAttributes(asset) {
 
 async function downloadForUser(story, downloadPath) {
   const assets = [...story.images, ...story.videos];
-  console.log(`downloading ${assets.length} assets for ${story.username}...`);
-  return new Promise((resolve, reject) => {
-    eachLimit(
-      assets,
-      10,
-      (asset, callback) => {
-        const { filename } = assetAttributes(asset);
-        downloadFile(downloadPath, asset.url, story.username, filename)
-          .then(callback)
-          .catch((e) => reject(e));
-      },
-      (err) => {
-        if (err) reject(err);
-        else resolve();
-      }
-    );
+  debug(`downloading ${assets.length} assets for ${story.username}...`);
+  return mapLimit(assets, 10, (asset, callback) => {
+    const { filename } = assetAttributes(asset);
+    downloadFile(downloadPath, asset.url, story.username, filename)
+      .then((downloadedPath) => callback(null, downloadedPath))
+      .catch((e) => callback(e));
   });
 }
 
-async function download(stories, downloadPath = defaultDownloadPath) {
+async function downloadStories(stories, downloadPath = defaultDownloadPath) {
   return Promise.all(stories.map(async (story) => downloadForUser(story, downloadPath)));
 }
 
 module.exports = {
   login,
   getStories,
-  download
+  downloadStories
 };
