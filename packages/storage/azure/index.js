@@ -1,22 +1,36 @@
 const { BlobServiceClient } = require('@azure/storage-blob');
 const mapLimit = require('async/mapLimit');
 const debug = require('debug')('storage-azure');
-const { v4: uuidv4 } = require('uuid');
 
 const AZURE_STORAGE_CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
 
+/*
+|--------------------------------------------------------------------------
+| Private functions
+|--------------------------------------------------------------------------
+*/
 async function _createContainerServiceClient(containerName) {
-  // Create the BlobServiceClient object which will be used to create a container client
   const blobServiceClient = await BlobServiceClient.fromConnectionString(
     AZURE_STORAGE_CONNECTION_STRING
   );
-  // Get a reference to a container
   return blobServiceClient.getContainerClient(containerName);
 }
 
 async function _createBlockBlobServiceClient(containerName, blobName) {
   const containerClient = await _createContainerServiceClient(containerName);
   return containerClient.getBlockBlobClient(blobName);
+}
+
+/*
+|--------------------------------------------------------------------------
+| Public functions
+|--------------------------------------------------------------------------
+*/
+async function uploadFile(filepath, containerName, uploadPath) {
+  debug(`uploading file ${filepath} to ${uploadPath}`);
+  return _createBlockBlobServiceClient(containerName, uploadPath).then((blockBlockClient) =>
+    blockBlockClient.uploadFile(filepath)
+  );
 }
 
 async function uploadFiles(filepaths, containerName, batchUploadLimit = 5, makeUploadPath) {
@@ -33,10 +47,7 @@ async function uploadFiles(filepaths, containerName, batchUploadLimit = 5, makeU
       callback(new Error(`missing upload path for file ${filepath}`));
       return;
     }
-
-    debug(`uploading file ${filepath} to ${uploadPath}`);
-    _createBlockBlobServiceClient(containerName, uploadPath)
-      .then((blockBlockClient) => blockBlockClient.uploadFile(filepath))
+    uploadFile(filepath, containerName, uploadPath)
       .then((response) => {
         debug(`uploaded file to ${filepath} to ${uploadPath}`);
         callback(null, response);
@@ -46,5 +57,6 @@ async function uploadFiles(filepaths, containerName, batchUploadLimit = 5, makeU
 }
 
 module.exports = {
+  uploadFile,
   uploadFiles
 };
