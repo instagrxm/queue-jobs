@@ -38,13 +38,14 @@ async function saveFile(data, path) {
 function parseWhitelist() {
   let list = null;
   if (_.isString(IG_WHITELIST) && !_.isEmpty(IG_WHITELIST)) {
-    list = IG_WHITELIST.split(',').replace(/ /g, '');
+    list = IG_WHITELIST.replace(/ /g, '').split(',');
   }
   debug(`whitelist ${list}`);
   return list;
 }
 
-function keepUser(username, whiteList = []) {
+function keepUser(username, whiteList) {
+  if (!whiteList) return true;
   return _.includes(whiteList, username);
 }
 
