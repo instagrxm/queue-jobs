@@ -64,7 +64,10 @@ async function downloadFile(downloadPath, url, folder, filename) {
 
   response.data.pipe(writer);
   return new Promise((resolve, reject) => {
-    writer.on('finish', () => resolve(p));
+    writer.on('finish', () => {
+      writer.close();
+      resolve(p);
+    });
     writer.on('error', reject);
   });
 }
